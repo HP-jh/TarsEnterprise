@@ -1,2 +1,102 @@
-# TarsEnterprise
-万物皆 MCP — Enterprise Gateway for AI Agents, MCP Servers &amp; Multi-Client Orchestration
+# TarsEnterprise — 万物皆 MCP 🚀
+
+> **"Everything is MCP"** — Enterprise Gateway for AI Agents, MCP Servers & Multi-Client Orchestration
+
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+[![Go Report Card](https://goreportcard.com/badge/github.com/HP-jh/TarsEnterprise)](https://goreportcard.com/report/github.com/HP-jh/TarsEnterprise)
+
+TarsEnterprise (TE) 是企业级 AI 网关，支持多进程并行接入多个客户端、AI 通过 OpenAI Function Calling 直接调用工具、一个工具作用于多个客户端、多工具并发发起。基于 OpenClaw 优化，具备智能体沙箱环境，可直接覆盖 OpenClaw 主流漏洞。
+
+## ✨ 核心特性
+
+- **多进程并行客户端接入**：企业级高并发网关，端口 `8888`
+- **万物皆 MCP**：OpenClaw MCP 化接入，工具即 MCP Server
+- **TSG ↔ TE 互通**：个人版与企业版双向消息投递（mTLS + 角色 Token）
+- **分布式/边缘路由**：NOB 内置路由、TE-GW 网关调度、OpenAI Realtime Agent 直调
+- **6 种公司类型**：学校 / 互联网 / KPI考核 / 咨询 / 金融 / 政企，角色-资源-动作三轴权限
+- **智能体沙箱**：gVisor + seccomp + 网络隔离，复杂工具全部沙箱化
+- **TOP 应用统计**：智能体级 Prometheus 指标 + Grafana 看板
+- **多语言适配**：Python / Node.js / Rust / PowerShell / Java + Go 完整最低级 fallback
+- **极致小白化**：6 步首次配置向导，错误信息全人话化
+
+## 🏢 公司类型
+
+| 类型 | 标识 | 典型角色 | 核心资源 |
+|------|------|---------|---------|
+| 学校 | `education` | 教师、学生、家长 | 课程、成绩、家校 |
+| 互联网公司 | `tech` | 产品、研发、运营、HR | 项目、迭代、事故 |
+| KPI 考核公司 | `kpi` | 部门经理、小组长、员工 | 日报、周报、月报 |
+| 咨询公司 | `consulting` | 顾问、项目经理、客户 | 项目、客户、计费 |
+| 金融机构 | `finance` | 风控、合规、审计 | 交易、账户、报告 |
+| 政企机构 | `gov` | 科员、处长、审批人 | 公文、流程、权限 |
+
+## 🚀 快速开始
+
+```bash
+# 1. 下载对应平台二进制
+curl -LO https://github.com/HP-jh/TarsEnterprise/releases/latest/download/te-v0.1.0-linux-amd64
+chmod +x te-v0.1.0-linux-amd64
+
+# 2. 启动网关（首次启动自动进入配置向导）
+./te-v0.1.0-linux-amd64
+
+# 3. 打开 http://localhost:8888 完成 6 步配置
+```
+
+## 🛡️ 安全
+
+- mTLS 双向认证（TSG ↔ TE 互通）
+- 角色 Token 二次确认机制
+- 智能体沙箱：gVisor runsc + seccomp BPF
+- OpenClaw 漏洞覆盖：258 CVE 签名库
+- 审计哈希链：全操作不可篡改日志
+
+## 📊 监控
+
+Prometheus 端点：`http://localhost:8888/metrics`
+
+```bash
+curl http://localhost:8888/metrics
+# te_agent_calls_total, te_agent_latency_seconds, te_agent_errors_total
+```
+
+Grafana 看板导入 `dashboards/grafana.json`。
+
+## 🌐 交互方式
+
+1. **NOB 内置路由**：沿用 TSG 自研 NOB 协议
+2. **TE-GW 网关调度**：企业版自研调度协议
+3. **OpenAI Realtime Agent**：双工语音 + Function Call 直调
+
+## 📦 架构
+
+```
+┌─────────────────────────────────────────────┐
+│           TarsEnterprise Gateway            │
+│              (Port 8888)                     │
+├─────────────┬─────────────┬─────────────────┤
+│  Company    │   MCP Hub   │   TSG Bridge    │
+│  Schema     │   (Servers) │   (mTLS/NATS)   │
+├─────────────┼─────────────┼─────────────────┤
+│  Role/RBAC  │  Sandbox    │   Metrics       │
+│  (KingdoM)  │  (gVisor)   │  (Prometheus)   │
+├─────────────┴─────────────┴─────────────────┤
+│         Lang Adapters (Py/Node/Rust/...)     │
+└─────────────────────────────────────────────┘
+```
+
+## 🤝 与 TSG 互通
+
+```
+TSG (Personal)  ←──mTLS──→  TE (Enterprise)
+     │                          │
+   NATS JetStream  ←──State Sync──→  NATS JetStream
+```
+
+- 个人版 → 企业版：消息投递（带角色 Token）
+- 企业版 → 个人版：反向命令（带审计 + 二次确认）
+- State 同步：NATS JetStream 或 Redis Streams
+
+## 📄 License
+
+Apache License 2.0 — 详见 [LICENSE](LICENSE)
