@@ -10,8 +10,10 @@ import (
 
 	"github.com/HP-jh/TarsEnterprise/pkg/company"
 	"github.com/HP-jh/TarsEnterprise/pkg/config"
+	"github.com/HP-jh/TarsEnterprise/pkg/i18n"
 	"github.com/HP-jh/TarsEnterprise/pkg/nats"
 	"github.com/HP-jh/TarsEnterprise/pkg/role"
+	"github.com/HP-jh/TarsEnterprise/pkg/security"
 	"github.com/HP-jh/TarsEnterprise/pkg/tsgclient"
 )
 
@@ -101,7 +103,7 @@ func newTSGInterop(cfg config.TSGBridgeConfig) *TSGInterop {
 
 func (g *Gateway) handleTSGCommand(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		security.FriendlyMethodError(w, "POST")
 		return
 	}
 	var req struct {
@@ -110,7 +112,7 @@ func (g *Gateway) handleTSGCommand(w http.ResponseWriter, r *http.Request) {
 		RoleToken string                 `json:"role_token"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		i18n.FriendlyError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -167,7 +169,7 @@ func (g *Gateway) handleTSGCommand(w http.ResponseWriter, r *http.Request) {
 
 func (g *Gateway) handleTSGCommands(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "GET required", http.StatusMethodNotAllowed)
+		security.FriendlyMethodError(w, "GET")
 		return
 	}
 	g.tsgInterop.mu.RLock()
@@ -188,7 +190,7 @@ func (g *Gateway) handleTSGEvents(w http.ResponseWriter, r *http.Request) {
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {
-		http.Error(w, "streaming not supported", http.StatusInternalServerError)
+		i18n.FriendlyError(w, http.StatusInternalServerError, "streaming not supported")
 		return
 	}
 
@@ -220,7 +222,7 @@ func (g *Gateway) handleTSGEvents(w http.ResponseWriter, r *http.Request) {
 
 func (g *Gateway) handleTSGStateSync(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		security.FriendlyMethodError(w, "POST")
 		return
 	}
 	var req struct {
@@ -228,7 +230,7 @@ func (g *Gateway) handleTSGStateSync(w http.ResponseWriter, r *http.Request) {
 		RoleToken string                 `json:"role_token"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		i18n.FriendlyError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -252,7 +254,7 @@ func (g *Gateway) handleTSGStateSync(w http.ResponseWriter, r *http.Request) {
 
 func (g *Gateway) handleTSGState(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "GET required", http.StatusMethodNotAllowed)
+		security.FriendlyMethodError(w, "GET")
 		return
 	}
 	g.tsgInterop.mu.RLock()
@@ -271,7 +273,7 @@ func (g *Gateway) handleTSGState(w http.ResponseWriter, r *http.Request) {
 
 func (g *Gateway) handleTSGRoleBind(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		security.FriendlyMethodError(w, "POST")
 		return
 	}
 	var req struct {
@@ -281,11 +283,11 @@ func (g *Gateway) handleTSGRoleBind(w http.ResponseWriter, r *http.Request) {
 		CompanyID string `json:"company_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		i18n.FriendlyError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	if req.UserID == "" || req.RoleID == "" {
-		http.Error(w, "user_id and role_id required", http.StatusBadRequest)
+		i18n.FriendlyError(w, http.StatusBadRequest, "user_id and role_id required")
 		return
 	}
 
@@ -322,7 +324,7 @@ func (g *Gateway) handleTSGRoleBind(w http.ResponseWriter, r *http.Request) {
 // handleRoleCheckCross 扩展：支持跨网关模式（带 role_token 调用 TSG 验签）
 func (g *Gateway) handleRoleCheckCross(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		security.FriendlyMethodError(w, "POST")
 		return
 	}
 	var req struct {
@@ -332,7 +334,7 @@ func (g *Gateway) handleRoleCheckCross(w http.ResponseWriter, r *http.Request) {
 		RoleToken  string `json:"role_token,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		i18n.FriendlyError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 

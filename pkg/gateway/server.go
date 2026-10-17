@@ -4,15 +4,19 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
+	"os/exec"
 
 	"github.com/HP-jh/TarsEnterprise/pkg/company"
 	"github.com/HP-jh/TarsEnterprise/pkg/config"
+	"github.com/HP-jh/TarsEnterprise/pkg/i18n"
 	"github.com/HP-jh/TarsEnterprise/pkg/knowledge"
 	"github.com/HP-jh/TarsEnterprise/pkg/mcp"
 	"github.com/HP-jh/TarsEnterprise/pkg/metrics"
 	"github.com/HP-jh/TarsEnterprise/pkg/obsidian"
 	"github.com/HP-jh/TarsEnterprise/pkg/role"
 	"github.com/HP-jh/TarsEnterprise/pkg/sandbox"
+	"github.com/HP-jh/TarsEnterprise/pkg/security"
 	"github.com/HP-jh/TarsEnterprise/pkg/voicecorrection"
 )
 
@@ -49,40 +53,56 @@ func New(cfg *config.Config) *Gateway {
 }
 
 func (g *Gateway) RegisterRoutes(mux *http.ServeMux) {
+	// Common middleware stack for API endpoints
+	apiChain := func(h http.HandlerFunc) http.HandlerFunc {
+		return security.Chain(h,
+			security.MaxBody(8<<20),
+			security.SecureHeaders,
+			security.CORS,
+			security.RateLimit,
+		)
+	}
+
 	// Health
-	mux.HandleFunc("/health", g.handleHealth)
+	mux.HandleFunc("/health", apiChain(g.handleHealth))
 	// Metrics (Prometheus)
-	mux.HandleFunc("/metrics", metrics.HTTPHandler())
+	mux.HandleFunc("/metrics", apiChain(metrics.HTTPHandler()))
 	// API v1
-	mux.HandleFunc("/api/v1/company/schema", g.handleCompanySchema)
-	mux.HandleFunc("/api/v1/role/check", g.handleRoleCheckCross)
-	mux.HandleFunc("/api/v1/tools", g.handleTools)
-	mux.HandleFunc("/api/v1/tools/call", g.handleToolCall)
-	mux.HandleFunc("/api/v1/mcp/servers", g.handleMCPServers)
-	mux.HandleFunc("/api/v1/mcp/call", g.handleMCPCall)
-	mux.HandleFunc("/api/v1/sandbox/run", g.handleSandboxRun)
-	mux.HandleFunc("/api/v1/config/merge", g.handleConfigMerge)
-	mux.HandleFunc("/api/v1/lang/detect", g.handleLangDetect)
-	mux.HandleFunc("/api/v1/tsg/bridge", g.handleTSGBridge)
+	mux.HandleFunc("/api/v1/company/schema", apiChain(g.handleCompanySchema))
+	mux.HandleFunc("/api/v1/role/check", apiChain(g.handleRoleCheckCross))
+	mux.HandleFunc("/api/v1/tools", apiChain(g.handleTools))
+	mux.HandleFunc("/api/v1/tools/call", apiChain(g.handleToolCall))
+	mux.HandleFunc("/api/v1/mcp/servers", apiChain(g.handleMCPServers))
+	mux.HandleFunc("/api/v1/mcp/call", apiChain(g.handleMCPCall))
+	mux.HandleFunc("/api/v1/sandbox/run", apiChain(g.handleSandboxRun))
+	mux.HandleFunc("/api/v1/config/merge", apiChain(g.handleConfigMerge))
+	mux.HandleFunc("/api/v1/lang/detect", apiChain(g.handleLangDetect))
+	mux.HandleFunc("/api/v1/tsg/bridge", apiChain(g.handleTSGBridge))
 	// TSG interop v0.3.0 endpoints
-	mux.HandleFunc("/api/v1/tsg/command", g.handleTSGCommand)
-	mux.HandleFunc("/api/v1/tsg/commands", g.handleTSGCommands)
-	mux.HandleFunc("/api/v1/tsg/events", g.handleTSGEvents)
-	mux.HandleFunc("/api/v1/tsg/state/sync", g.handleTSGStateSync)
-	mux.HandleFunc("/api/v1/tsg/state", g.handleTSGState)
-	mux.HandleFunc("/api/v1/tsg/role/bind", g.handleTSGRoleBind)
+	mux.HandleFunc("/api/v1/tsg/command", apiChain(g.handleTSGCommand))
+	mux.HandleFunc("/api/v1/tsg/commands", apiChain(g.handleTSGCommands))
+	mux.HandleFunc("/api/v1/tsg/events", apiChain(g.handleTSGEvents))
+	mux.HandleFunc("/api/v1/tsg/state/sync", apiChain(g.handleTSGStateSync))
+	mux.HandleFunc("/api/v1/tsg/state", apiChain(g.handleTSGState))
+	mux.HandleFunc("/api/v1/tsg/role/bind", apiChain(g.handleTSGRoleBind))
 	// Knowledge Base
-	mux.HandleFunc("/api/v1/kb/search", g.handleKBSearch)
-	mux.HandleFunc("/api/v1/kb/docs", g.handleKBDocs)
-	mux.HandleFunc("/api/v1/kb/import", g.handleKBImport)
+	mux.HandleFunc("/api/v1/kb/search", apiChain(g.handleKBSearch))
+	mux.HandleFunc("/api/v1/kb/docs", apiChain(g.handleKBDocs))
+	mux.HandleFunc("/api/v1/kb/import", apiChain(g.handleKBImport))
 	// Obsidian
-	mux.HandleFunc("/api/v1/obsidian/sync", g.handleObsidianSync)
-	mux.HandleFunc("/api/v1/obsidian/writeback", g.handleObsidianWriteBack)
+	mux.HandleFunc("/api/v1/obsidian/sync", apiChain(g.handleObsidianSync))
+	mux.HandleFunc("/api/v1/obsidian/writeback", apiChain(g.handleObsidianWriteBack))
 	// Voice Correction
-	mux.HandleFunc("/api/v1/voice/correct", g.handleVoiceCorrect)
-	// Auto-update v0.3.0 endpoints
-	mux.HandleFunc("/api/v1/update/check", g.handleUpdateCheck)
-	mux.HandleFunc("/api/v1/update/apply", g.handleUpdateApply)
+	mux.HandleFunc("/api/v1/voice/correct", apiChain(g.handleVoiceCorrect))
+	// Auto-update endpoints (check public, apply admin-only)
+	mux.HandleFunc("/api/v1/update/check", apiChain(g.handleUpdateCheck))
+	mux.HandleFunc("/api/v1/update/apply", security.Chain(g.handleUpdateApply,
+		security.MaxBody(1<<20),
+		security.SecureHeaders,
+		security.CORS,
+		security.RateLimit,
+		security.AdminAuth(g.cfg.AdminToken),
+	))
 	// Wizard static files
 	mux.Handle("/wizard/", http.StripPrefix("/wizard/", http.FileServer(http.Dir("./web"))))
 	// Root redirect to wizard
@@ -109,7 +129,7 @@ func (g *Gateway) handleCompanySchema(w http.ResponseWriter, r *http.Request) {
 	}
 	schema, err := company.GetSchema(company.CompanyType(ctype))
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		i18n.FriendlyError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	writeJSON(w, schema)
@@ -117,7 +137,7 @@ func (g *Gateway) handleCompanySchema(w http.ResponseWriter, r *http.Request) {
 
 func (g *Gateway) handleRoleCheck(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		security.FriendlyMethodError(w, "POST")
 		return
 	}
 	var req struct {
@@ -126,7 +146,7 @@ func (g *Gateway) handleRoleCheck(w http.ResponseWriter, r *http.Request) {
 		Action     string `json:"action"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		i18n.FriendlyError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	ok := g.roleMgr.Can(req.UserID, req.ResourceID, company.Action(req.Action))
@@ -139,7 +159,7 @@ func (g *Gateway) handleTools(w http.ResponseWriter, r *http.Request) {
 
 func (g *Gateway) handleToolCall(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		security.FriendlyMethodError(w, "POST")
 		return
 	}
 	var req struct {
@@ -148,7 +168,7 @@ func (g *Gateway) handleToolCall(w http.ResponseWriter, r *http.Request) {
 		ClientID string                 `json:"client_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		i18n.FriendlyError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	// Find tool
@@ -160,7 +180,7 @@ func (g *Gateway) handleToolCall(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if tool == nil {
-		http.Error(w, "tool not found", http.StatusNotFound)
+		i18n.FriendlyError(w, http.StatusNotFound, "tool not found")
 		return
 	}
 	// Record metrics
@@ -169,7 +189,7 @@ func (g *Gateway) handleToolCall(w http.ResponseWriter, r *http.Request) {
 	result, err := g.executeTool(tool, req.Params)
 	if err != nil {
 		metrics.RecordAgentError(req.ToolID)
-		http.Error(w, fmt.Sprintf("tool execution failed: %v", err), http.StatusInternalServerError)
+		i18n.FriendlyError(w, http.StatusInternalServerError, fmt.Sprintf("tool execution failed: %v", err))
 		return
 	}
 	writeJSON(w, map[string]interface{}{
@@ -184,21 +204,21 @@ func (g *Gateway) handleMCPServers(w http.ResponseWriter, r *http.Request) {
 
 func (g *Gateway) handleMCPCall(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		security.FriendlyMethodError(w, "POST")
 		return
 	}
 	var req struct {
-		Server  string                 `json:"server"`
-		Tool    string                 `json:"tool"`
-		Params  map[string]interface{} `json:"params"`
+		Server string                 `json:"server"`
+		Tool   string                 `json:"tool"`
+		Params map[string]interface{} `json:"params"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		i18n.FriendlyError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	result, err := g.mcpHub.Call(r.Context(), req.Server, req.Tool, req.Params)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		i18n.FriendlyError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	writeJSON(w, result)
@@ -206,7 +226,7 @@ func (g *Gateway) handleMCPCall(w http.ResponseWriter, r *http.Request) {
 
 func (g *Gateway) handleSandboxRun(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		security.FriendlyMethodError(w, "POST")
 		return
 	}
 	var req struct {
@@ -215,12 +235,17 @@ func (g *Gateway) handleSandboxRun(w http.ResponseWriter, r *http.Request) {
 		Lang    string   `json:"lang"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		i18n.FriendlyError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	// Security guard: validate command against blacklist
+	if err := sandbox.ValidateCommand(req.Command, req.Args); err != nil {
+		i18n.FriendlyError(w, http.StatusForbidden, err.Error())
 		return
 	}
 	result, err := g.sandbox.Run(r.Context(), req.Lang, req.Command, req.Args)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		i18n.FriendlyError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	writeJSON(w, result)
@@ -228,19 +253,19 @@ func (g *Gateway) handleSandboxRun(w http.ResponseWriter, r *http.Request) {
 
 func (g *Gateway) handleConfigMerge(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		security.FriendlyMethodError(w, "POST")
 		return
 	}
 	var req struct {
 		Modules []map[string]interface{} `json:"modules"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		i18n.FriendlyError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	merged, collisions, err := config.MergeModules(req.Modules)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		i18n.FriendlyError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	writeJSON(w, map[string]interface{}{
@@ -273,16 +298,16 @@ func (g *Gateway) executeTool(tool *config.ToolConfig, params map[string]interfa
 // Knowledge Base handlers
 func (g *Gateway) handleKBSearch(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		security.FriendlyMethodError(w, "POST")
 		return
 	}
 	var req struct {
-		Query      string `json:"query"`
-		TopK       int    `json:"top_k"`
+		Query       string `json:"query"`
+		TopK        int    `json:"top_k"`
 		CompanyType string `json:"company_type"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		i18n.FriendlyError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	if req.TopK <= 0 {
@@ -295,7 +320,7 @@ func (g *Gateway) handleKBSearch(w http.ResponseWriter, r *http.Request) {
 	kb := g.kbMgr.InitCompanyBase(ctype)
 	results, err := kb.Search(req.Query, req.TopK)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		i18n.FriendlyError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	writeJSON(w, map[string]interface{}{
@@ -316,7 +341,7 @@ func (g *Gateway) handleKBDocs(w http.ResponseWriter, r *http.Request) {
 
 func (g *Gateway) handleKBImport(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		security.FriendlyMethodError(w, "POST")
 		return
 	}
 	var req struct {
@@ -324,7 +349,7 @@ func (g *Gateway) handleKBImport(w http.ResponseWriter, r *http.Request) {
 		CompanyType string `json:"company_type"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		i18n.FriendlyError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	ctype := req.CompanyType
@@ -333,7 +358,7 @@ func (g *Gateway) handleKBImport(w http.ResponseWriter, r *http.Request) {
 	}
 	kb := g.kbMgr.InitCompanyBase(ctype)
 	if err := kb.ImportFromDir(req.Dir); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		i18n.FriendlyError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	writeJSON(w, map[string]interface{}{
@@ -345,7 +370,7 @@ func (g *Gateway) handleKBImport(w http.ResponseWriter, r *http.Request) {
 // Obsidian handlers
 func (g *Gateway) handleObsidianSync(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		security.FriendlyMethodError(w, "POST")
 		return
 	}
 	var req struct {
@@ -353,7 +378,7 @@ func (g *Gateway) handleObsidianSync(w http.ResponseWriter, r *http.Request) {
 		CompanyType string `json:"company_type"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		i18n.FriendlyError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	path := req.VaultPath
@@ -367,19 +392,19 @@ func (g *Gateway) handleObsidianSync(w http.ResponseWriter, r *http.Request) {
 	kb := g.kbMgr.InitCompanyBase(ctype)
 	se := obsidian.NewSyncEngine(path, kb)
 	if err := se.SyncOnce(); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		i18n.FriendlyError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	writeJSON(w, map[string]interface{}{
-		"vault":   path,
-		"synced":  len(kb.ListDocuments()),
-		"status":  "ok",
+		"vault":  path,
+		"synced": len(kb.ListDocuments()),
+		"status": "ok",
 	})
 }
 
 func (g *Gateway) handleObsidianWriteBack(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		security.FriendlyMethodError(w, "POST")
 		return
 	}
 	var req struct {
@@ -387,7 +412,7 @@ func (g *Gateway) handleObsidianWriteBack(w http.ResponseWriter, r *http.Request
 		VaultPath string `json:"vault_path"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		i18n.FriendlyError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	path := req.VaultPath
@@ -396,7 +421,7 @@ func (g *Gateway) handleObsidianWriteBack(w http.ResponseWriter, r *http.Request
 	}
 	kb, ok := g.kbMgr.GetBase("kb-" + g.cfg.CompanyType)
 	if !ok {
-		http.Error(w, "knowledge base not found", http.StatusNotFound)
+		i18n.FriendlyError(w, http.StatusNotFound, "knowledge base not found")
 		return
 	}
 	for _, doc := range kb.ListDocuments() {
@@ -411,19 +436,19 @@ func (g *Gateway) handleObsidianWriteBack(w http.ResponseWriter, r *http.Request
 // Voice Correction handler
 func (g *Gateway) handleVoiceCorrect(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		security.FriendlyMethodError(w, "POST")
 		return
 	}
 	var req struct {
 		Text string `json:"text"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		i18n.FriendlyError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	result, err := g.voiceCorr.Correct(r.Context(), req.Text)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		i18n.FriendlyError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	writeJSON(w, result)
@@ -447,7 +472,10 @@ func langDetect() map[string]interface{} {
 func fileExists(name string) bool {
 	paths := []string{"/usr/bin/", "/usr/local/bin/", "/bin/"}
 	for _, p := range paths {
-		if _, err := http.Get("file://" + p + name); err == nil {
+		if _, err := exec.LookPath(name); err == nil {
+			return true
+		}
+		if _, err := os.Stat(p + name); err == nil {
 			return true
 		}
 	}
