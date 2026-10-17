@@ -7,86 +7,57 @@ import (
 	"time"
 )
 
-// Transport NATS JetStream 传输层抽象（v0.1.0 使用内存模拟，实际部署接入 NATS）
-type Transport struct {
-	url       string
-	streams   map[string][]Message
-	subscribers map[string][]func(Message)
-}
-
 // Message 互通消息格式
 type Message struct {
 	ID        string                 `json:"id"`
-	From      string                 `json:"from"`      // "tsg" or "te"
+	From      string                 `json:"from"` // "tsg" or "te"
 	To        string                 `json:"to"`
-	Type      string                 `json:"type"`      // "message", "command", "state_sync"
+	Type      string                 `json:"type"` // "message", "command", "state_sync"
 	RoleToken string                 `json:"role_token"`
 	Payload   map[string]interface{} `json:"payload"`
 	Timestamp int64                  `json:"timestamp"`
 	AuditHash string                 `json:"audit_hash"`
 }
 
+// Transporter 定义 NATS 传输接口（mock / real 两种实现）
+type Transporter interface {
+	Connect() error
+	Close()
+	Publish(subject string, msg Message) error
+	Subscribe(subject string, handler func(Message)) error
+	Request(ctx context.Context, subject string, req Message) (*Message, error)
+	StateSync(direction string, state map[string]interface{}) error
+	Connected() bool
+	URL() string
+}
+
+// Transport 是 Transporter 的别名，保持向后兼容
+type Transport struct {
+	impl Transporter
+}
+
 func NewTransport(url string) *Transport {
-	return &Transport{
-		url:         url,
-		streams:     make(map[string][]Message),
-		subscribers: make(map[string][]func(Message)),
-	}
+	return &Transport{impl: newTransportImpl(url)}
 }
 
-func (t *Transport) Connect() error {
-	// v0.1.0: memory-backed transport
-	if t.url == "" {
-		t.url = "memory://"
-	}
-	return nil
-}
-
+func (t *Transport) Connect() error          { return t.impl.Connect() }
+func (t *Transport) Close()                  { t.impl.Close() }
 func (t *Transport) Publish(subject string, msg Message) error {
-	msg.ID = fmt.Sprintf("%d", time.Now().UnixNano())
-	msg.Timestamp = time.Now().Unix()
-	msg.AuditHash = simpleHash(msg)
-	t.streams[subject] = append(t.streams[subject], msg)
-	for _, fn := range t.subscribers[subject] {
-		go fn(msg)
-	}
-	return nil
+	return t.impl.Publish(subject, msg)
 }
-
 func (t *Transport) Subscribe(subject string, handler func(Message)) error {
-	t.subscribers[subject] = append(t.subscribers[subject], handler)
-	return nil
+	return t.impl.Subscribe(subject, handler)
 }
-
 func (t *Transport) Request(ctx context.Context, subject string, req Message) (*Message, error) {
-	req.ID = fmt.Sprintf("req-%d", time.Now().UnixNano())
-	req.Timestamp = time.Now().Unix()
-	if err := t.Publish(subject, req); err != nil {
-		return nil, err
-	}
-	// Simple sync response simulation
-	resp := &Message{
-		ID:        req.ID + "-resp",
-		From:      req.To,
-		To:        req.From,
-		Type:      "ack",
-		Timestamp: time.Now().Unix(),
-		Payload:   map[string]interface{}{"status": "ok"},
-	}
-	return resp, nil
+	return t.impl.Request(ctx, subject, req)
 }
-
 func (t *Transport) StateSync(direction string, state map[string]interface{}) error {
-	return t.Publish("te.state."+direction, Message{
-		From:    "te",
-		To:      "tsg",
-		Type:    "state_sync",
-		Payload: state,
-	})
+	return t.impl.StateSync(direction, state)
 }
+func (t *Transport) Connected() bool         { return t.impl.Connected() }
+func (t *Transport) URL() string             { return t.impl.URL() }
 
 func simpleHash(msg Message) string {
-	// Simplified audit hash for v0.1.0
 	data, _ := json.Marshal(msg)
 	sum := 0
 	for _, b := range data {
@@ -94,3 +65,5 @@ func simpleHash(msg Message) string {
 	}
 	return fmt.Sprintf("audit:%x", sum)
 }
+
+func nowNanoID() string { return fmt.Sprintf("%d", time.Now().UnixNano()) }

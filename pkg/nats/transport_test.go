@@ -11,6 +11,7 @@ func TestTransport_PublishSubscribe(t *testing.T) {
 	if err := tr.Connect(); err != nil {
 		t.Fatal(err)
 	}
+	defer tr.Close()
 
 	var received Message
 	done := make(chan bool, 1)
@@ -37,6 +38,7 @@ func TestTransport_PublishSubscribe(t *testing.T) {
 func TestTransport_Request(t *testing.T) {
 	tr := NewTransport("")
 	_ = tr.Connect()
+	defer tr.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	resp, err := tr.Request(ctx, "test.req", Message{From: "te", To: "tsg", Type: "command"})
@@ -51,8 +53,24 @@ func TestTransport_Request(t *testing.T) {
 func TestTransport_StateSync(t *testing.T) {
 	tr := NewTransport("")
 	_ = tr.Connect()
+	defer tr.Close()
 	err := tr.StateSync("push", map[string]interface{}{"status": "ok"})
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestTransport_Connected(t *testing.T) {
+	tr := NewTransport("")
+	if tr.Connected() {
+		t.Error("should not be connected before Connect")
+	}
+	_ = tr.Connect()
+	if !tr.Connected() {
+		t.Error("should be connected after Connect")
+	}
+	tr.Close()
+	if tr.Connected() {
+		t.Error("should not be connected after Close")
 	}
 }
