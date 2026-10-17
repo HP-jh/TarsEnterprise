@@ -150,6 +150,28 @@ curl -N http://localhost:8888/api/v1/tsg/events
 # → {"event":"commands_updated","count":1}
 ```
 
+## 🔄 自动更新（v0.3.0）
+
+TarsEnterprise 内置自动更新引擎，启动后可随时检查并应用最新版本。
+
+```bash
+# 检查是否有新版本（公开端点，无需认证）
+curl http://localhost:8888/api/v1/update/check
+# → {"has_update":false,"current":"v0.3.0","latest":"v0.3.0"}
+
+# 应用更新（需要管理员 Token）
+curl -X POST http://localhost:8888/api/v1/update/apply \
+  -H "X-Admin-Token: your-admin-token"
+# → {"ok":true,"message":"update applied, restart required","from":"v0.3.0","to":"v0.3.1"}
+```
+
+**特性**
+- GitHub Release 自动比对（semver）
+- SHA256SUMS 校验 + 原子替换
+- 解析失败自动回退 `~/.tars/stable_versions.json` 缓存的稳定版本
+- 旧版本保留 7 天，支持手动回滚
+- 跨 7 平台统一更新（Linux / macOS / Windows / Android）
+
 ## 📄 License
 
 Apache License 2.0 — 详见 [LICENSE](LICENSE)

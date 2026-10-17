@@ -19,6 +19,7 @@ type Config struct {
 	TSGBridge   TSGBridgeConfig   `json:"tsg_bridge"`
 	Sandbox     SandboxConfig     `json:"sandbox"`
 	Metrics     MetricsConfig     `json:"metrics"`
+	AdminToken  string            `json:"admin_token"`
 }
 
 type ClientConfig struct {

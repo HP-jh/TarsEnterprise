@@ -80,6 +80,9 @@ func (g *Gateway) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/obsidian/writeback", g.handleObsidianWriteBack)
 	// Voice Correction
 	mux.HandleFunc("/api/v1/voice/correct", g.handleVoiceCorrect)
+	// Auto-update v0.3.0 endpoints
+	mux.HandleFunc("/api/v1/update/check", g.handleUpdateCheck)
+	mux.HandleFunc("/api/v1/update/apply", g.handleUpdateApply)
 	// Wizard static files
 	mux.Handle("/wizard/", http.StripPrefix("/wizard/", http.FileServer(http.Dir("./web"))))
 	// Root redirect to wizard
