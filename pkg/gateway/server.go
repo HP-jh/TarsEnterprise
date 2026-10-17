@@ -7,29 +7,40 @@ import (
 
 	"github.com/HP-jh/TarsEnterprise/pkg/company"
 	"github.com/HP-jh/TarsEnterprise/pkg/config"
+	"github.com/HP-jh/TarsEnterprise/pkg/knowledge"
 	"github.com/HP-jh/TarsEnterprise/pkg/mcp"
 	"github.com/HP-jh/TarsEnterprise/pkg/metrics"
+	"github.com/HP-jh/TarsEnterprise/pkg/obsidian"
 	"github.com/HP-jh/TarsEnterprise/pkg/role"
 	"github.com/HP-jh/TarsEnterprise/pkg/sandbox"
+	"github.com/HP-jh/TarsEnterprise/pkg/voicecorrection"
 )
 
 type Gateway struct {
-	cfg      *config.Config
-	roleMgr  *role.Manager
-	mcpHub   *mcp.Hub
-	sandbox  *sandbox.Manager
+	cfg       *config.Config
+	roleMgr   *role.Manager
+	mcpHub    *mcp.Hub
+	sandbox   *sandbox.Manager
+	kbMgr     *knowledge.Manager
+	obsCfg    *obsidian.ConnectorConfig
+	voiceCorr *voicecorrection.Corrector
 }
 
 func New(cfg *config.Config) *Gateway {
 	gw := &Gateway{
-		cfg:     cfg,
-		roleMgr: role.NewManager(),
-		mcpHub:  mcp.NewHub(),
-		sandbox: sandbox.NewManager(),
+		cfg:       cfg,
+		roleMgr:   role.NewManager(),
+		mcpHub:    mcp.NewHub(),
+		sandbox:   sandbox.NewManager(),
+		kbMgr:     knowledge.NewManager(),
+		obsCfg:    obsidian.DefaultConnectorConfig(),
+		voiceCorr: voicecorrection.NewCorrector(""),
 	}
 	// Pre-build role matrix for configured company type
 	if cfg.CompanyType != "" {
 		_ = gw.roleMgr.BuildMatrix(company.CompanyType(cfg.CompanyType))
+		// Init knowledge base for company type
+		gw.kbMgr.InitCompanyBase(cfg.CompanyType)
 	}
 	return gw
 }
@@ -50,6 +61,15 @@ func (g *Gateway) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/config/merge", g.handleConfigMerge)
 	mux.HandleFunc("/api/v1/lang/detect", g.handleLangDetect)
 	mux.HandleFunc("/api/v1/tsg/bridge", g.handleTSGBridge)
+	// Knowledge Base
+	mux.HandleFunc("/api/v1/kb/search", g.handleKBSearch)
+	mux.HandleFunc("/api/v1/kb/docs", g.handleKBDocs)
+	mux.HandleFunc("/api/v1/kb/import", g.handleKBImport)
+	// Obsidian
+	mux.HandleFunc("/api/v1/obsidian/sync", g.handleObsidianSync)
+	mux.HandleFunc("/api/v1/obsidian/writeback", g.handleObsidianWriteBack)
+	// Voice Correction
+	mux.HandleFunc("/api/v1/voice/correct", g.handleVoiceCorrect)
 	// Wizard static files
 	mux.Handle("/wizard/", http.StripPrefix("/wizard/", http.FileServer(http.Dir("./web"))))
 	// Root redirect to wizard
@@ -234,8 +254,166 @@ func (g *Gateway) executeTool(tool *config.ToolConfig, params map[string]interfa
 	if tool.Sandboxed {
 		return g.sandbox.Run(nil, tool.Lang, tool.Entry, []string{})
 	}
-	// Non-sandboxed: direct execution (discouraged in production)
-	return map[string]string{"note": "non-sandbox execution not implemented in v0.1.0"}, nil
+	return map[string]string{"note": "non-sandbox execution not implemented in v0.2.0"}, nil
+}
+
+// Knowledge Base handlers
+func (g *Gateway) handleKBSearch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		Query      string `json:"query"`
+		TopK       int    `json:"top_k"`
+		CompanyType string `json:"company_type"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.TopK <= 0 {
+		req.TopK = 5
+	}
+	ctype := req.CompanyType
+	if ctype == "" {
+		ctype = g.cfg.CompanyType
+	}
+	kb := g.kbMgr.InitCompanyBase(ctype)
+	results, err := kb.Search(req.Query, req.TopK)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]interface{}{
+		"query":   req.Query,
+		"results": results,
+		"count":   len(results),
+	})
+}
+
+func (g *Gateway) handleKBDocs(w http.ResponseWriter, r *http.Request) {
+	ctype := r.URL.Query().Get("company_type")
+	if ctype == "" {
+		ctype = g.cfg.CompanyType
+	}
+	kb := g.kbMgr.InitCompanyBase(ctype)
+	writeJSON(w, kb.ListDocuments())
+}
+
+func (g *Gateway) handleKBImport(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		Dir         string `json:"dir"`
+		CompanyType string `json:"company_type"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	ctype := req.CompanyType
+	if ctype == "" {
+		ctype = g.cfg.CompanyType
+	}
+	kb := g.kbMgr.InitCompanyBase(ctype)
+	if err := kb.ImportFromDir(req.Dir); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]interface{}{
+		"imported": len(kb.ListDocuments()),
+		"dir":      req.Dir,
+	})
+}
+
+// Obsidian handlers
+func (g *Gateway) handleObsidianSync(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		VaultPath   string `json:"vault_path"`
+		CompanyType string `json:"company_type"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	path := req.VaultPath
+	if path == "" {
+		path = g.obsCfg.VaultPath
+	}
+	ctype := req.CompanyType
+	if ctype == "" {
+		ctype = g.cfg.CompanyType
+	}
+	kb := g.kbMgr.InitCompanyBase(ctype)
+	se := obsidian.NewSyncEngine(path, kb)
+	if err := se.SyncOnce(); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]interface{}{
+		"vault":   path,
+		"synced":  len(kb.ListDocuments()),
+		"status":  "ok",
+	})
+}
+
+func (g *Gateway) handleObsidianWriteBack(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		DocID     string `json:"doc_id"`
+		VaultPath string `json:"vault_path"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	path := req.VaultPath
+	if path == "" {
+		path = g.obsCfg.VaultPath
+	}
+	kb, ok := g.kbMgr.GetBase("kb-" + g.cfg.CompanyType)
+	if !ok {
+		http.Error(w, "knowledge base not found", http.StatusNotFound)
+		return
+	}
+	for _, doc := range kb.ListDocuments() {
+		if doc.ID == req.DocID || req.DocID == "" {
+			se := obsidian.NewSyncEngine(path, kb)
+			_ = se.WriteBack(doc)
+		}
+	}
+	writeJSON(w, map[string]interface{}{"status": "ok"})
+}
+
+// Voice Correction handler
+func (g *Gateway) handleVoiceCorrect(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		Text string `json:"text"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	result, err := g.voiceCorr.Correct(r.Context(), req.Text)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, result)
 }
 
 func writeJSON(w http.ResponseWriter, v interface{}) {
@@ -254,7 +432,6 @@ func langDetect() map[string]interface{} {
 }
 
 func fileExists(name string) bool {
-	// Simplified path check
 	paths := []string{"/usr/bin/", "/usr/local/bin/", "/bin/"}
 	for _, p := range paths {
 		if _, err := http.Get("file://" + p + name); err == nil {
