@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 )
 
-var Version = "dev"
+var Version = "v0.3.0"
 
 type Config struct {
 	FirstRun    bool              `json:"first_run"`

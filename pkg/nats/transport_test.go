@@ -6,12 +6,14 @@ import (
 	"time"
 )
 
-func TestTransport_PublishSubscribe(t *testing.T) {
+func TestTransport_Memory_PublishSubscribe(t *testing.T) {
 	tr := NewTransport("")
 	if err := tr.Connect(); err != nil {
 		t.Fatal(err)
 	}
-	defer tr.Close()
+	if tr.Mode() != "memory" {
+		t.Fatalf("expected memory mode, got %s", tr.Mode())
+	}
 
 	var received Message
 	done := make(chan bool, 1)
@@ -30,15 +32,17 @@ func TestTransport_PublishSubscribe(t *testing.T) {
 		if received.From != "te" {
 			t.Error("from mismatch")
 		}
+		if received.AuditHash == "" {
+			t.Error("audit hash missing")
+		}
 	case <-time.After(time.Second):
 		t.Error("timeout waiting for message")
 	}
 }
 
-func TestTransport_Request(t *testing.T) {
+func TestTransport_Memory_Request(t *testing.T) {
 	tr := NewTransport("")
 	_ = tr.Connect()
-	defer tr.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	resp, err := tr.Request(ctx, "test.req", Message{From: "te", To: "tsg", Type: "command"})
@@ -50,27 +54,39 @@ func TestTransport_Request(t *testing.T) {
 	}
 }
 
-func TestTransport_StateSync(t *testing.T) {
+func TestTransport_Memory_StateSync(t *testing.T) {
 	tr := NewTransport("")
 	_ = tr.Connect()
-	defer tr.Close()
 	err := tr.StateSync("push", map[string]interface{}{"status": "ok"})
 	if err != nil {
 		t.Fatal(err)
 	}
 }
 
-func TestTransport_Connected(t *testing.T) {
+func TestTransport_NATS_Fallback(t *testing.T) {
+	// 连接一个不存在的 NATS 服务器，应优雅降级到内存模式
+	tr := NewTransport("nats://127.0.0.1:19999")
+	if err := tr.Connect(); err != nil {
+		t.Fatal(err)
+	}
+	if tr.Mode() != "memory" {
+		t.Fatalf("expected fallback to memory, got %s", tr.Mode())
+	}
+	if tr.LastError() == nil {
+		t.Error("expected LastError to be set after fallback")
+	}
+	if !tr.IsConnected() {
+		t.Error("expected connected even in fallback mode")
+	}
+}
+
+func TestTransport_Close(t *testing.T) {
 	tr := NewTransport("")
-	if tr.Connected() {
-		t.Error("should not be connected before Connect")
-	}
 	_ = tr.Connect()
-	if !tr.Connected() {
-		t.Error("should be connected after Connect")
+	if err := tr.Close(); err != nil {
+		t.Fatal(err)
 	}
-	tr.Close()
-	if tr.Connected() {
-		t.Error("should not be connected after Close")
+	if tr.IsConnected() {
+		t.Error("expected disconnected after close")
 	}
 }

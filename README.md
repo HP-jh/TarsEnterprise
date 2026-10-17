@@ -11,11 +11,9 @@ TarsEnterprise (TE) 是企业级 AI 网关，支持多进程并行接入多个�
 
 - **多进程并行客户端接入**：企业级高并发网关，端口 `8888`
 - **万物皆 MCP**：OpenClaw MCP 化接入，工具即 MCP Server
-- **TSG ↔ TE 真闭环**：个人版与企业版双向指令投递 + 状态同步 + 角色跨网关验证
+- **TSG ↔ TE 互通**：个人版与企业版双向消息投递（mTLS + 角色 Token）
 - **分布式/边缘路由**：NOB 内置路由、TE-GW 网关调度、OpenAI Realtime Agent 直调
 - **6 种公司类型**：学校 / 互联网 / KPI考核 / 咨询 / 金融 / 政企，角色-资源-动作三轴权限
-- **知识库 + Obsidian 双向同步**：Markdown 分块、向量检索、Vault 同步
-- **语音纠错 MCP 工具**：本地规则纠错，B39 服务集成
 - **智能体沙箱**：gVisor + seccomp + 网络隔离，复杂工具全部沙箱化
 - **TOP 应用统计**：智能体级 Prometheus 指标 + Grafana 看板
 - **多语言适配**：Python / Node.js / Rust / PowerShell / Java + Go 完整最低级 fallback
@@ -36,63 +34,19 @@ TarsEnterprise (TE) 是企业级 AI 网关，支持多进程并行接入多个�
 
 ```bash
 # 1. 下载对应平台二进制
-curl -LO https://github.com/HP-jh/TarsEnterprise/releases/latest/download/te-v0.3.0-linux-amd64
-chmod +x te-v0.3.0-linux-amd64
+curl -LO https://github.com/HP-jh/TarsEnterprise/releases/latest/download/te-v0.1.0-linux-amd64
+chmod +x te-v0.1.0-linux-amd64
 
 # 2. 启动网关（首次启动自动进入配置向导）
-./te-v0.3.0-linux-amd64
+./te-v0.1.0-linux-amd64
 
 # 3. 打开 http://localhost:8888 完成 6 步配置
 ```
-
-## 🔄 TSG ↔ TE 真闭环示例（v0.3.0）
-
-```bash
-# 1. 配置 TSG 桥接（config.json）
-{
-  "tsg_bridge": {
-    "enabled": true,
-    "address": "https://tsg.example.com",
-    "nats_url": "nats://localhost:4222"
-  }
-}
-
-# 2. 企业版向个人版发送指令
-curl -X POST http://localhost:8888/api/v1/tsg/command \
-  -H "Content-Type: application/json" \
-  -d '{"tool_id":"tts.speak","params":{"text":"会议开始"}}'
-# → {"sent":true,"tsg_response":{"status":"ok"}}
-
-# 3. 拉取个人版回执指令
-curl http://localhost:8888/api/v1/tsg/commands
-# → {"commands":[{"tool_id":"tts.speak","status":"done"}]}
-
-# 4. 双向状态同步
-curl -X POST http://localhost:8888/api/v1/tsg/state/sync \
-  -d '{"state":{"mode":"active","users":5}}'
-# → {"acked":true}
-
-curl http://localhost:8888/api/v1/tsg/state
-# → {"local":{"mode":"active"},"tsg":{"mode":"active"},"ts":1729243453}
-
-# 5. 跨网关角色验证
-curl -X POST http://localhost:8888/api/v1/tsg/role/verify \
-  -d '{"user_id":"u1","resource_id":"project","action":"read"}'
-# → {"allowed":true,"local":true,"tsg":true,"cross":true}
-
-# 6. 绑定企业角色到 TSG
-curl -X POST http://localhost:8888/api/v1/tsg/role/bind \
-  -d '{"role_id":"dev","profession":"engineer","role_token":"valid-dev-token"}'
-# → {"bound":true}
-```
-
-** reconcile 循环**：启动后自动每 30 秒推本地 state → TSG，拉 TSG state → 本地，拉 TSG 指令 → 本地队列。
 
 ## 🛡️ 安全
 
 - mTLS 双向认证（TSG ↔ TE 互通）
 - 角色 Token 二次确认机制
-- 跨网关角色验签（带 role_token 调用 TSG 验证）
 - 智能体沙箱：gVisor runsc + seccomp BPF
 - OpenClaw 漏洞覆盖：258 CVE 签名库
 - 审计哈希链：全操作不可篡改日志
@@ -122,13 +76,10 @@ Grafana 看板导入 `dashboards/grafana.json`。
 │              (Port 8888)                     │
 ├─────────────┬─────────────┬─────────────────┤
 │  Company    │   MCP Hub   │   TSG Bridge    │
-│  Schema     │   (Servers) │  (Client SDK)   │
+│  Schema     │   (Servers) │   (mTLS/NATS)   │
 ├─────────────┼─────────────┼─────────────────┤
-│  Role/RBAC  │  Sandbox    │   NATS/HTTP     │
-│  (KingdoM)  │  (gVisor)   │   Reconcile     │
-├─────────────┼─────────────┼─────────────────┤
-│ Knowledge   │  Obsidian   │  Voice Correct  │
-│  Base       │   Sync      │   (MCP Tool)    │
+│  Role/RBAC  │  Sandbox    │   Metrics       │
+│  (KingdoM)  │  (gVisor)   │  (Prometheus)   │
 ├─────────────┴─────────────┴─────────────────┤
 │         Lang Adapters (Py/Node/Rust/...)     │
 └─────────────────────────────────────────────┘
@@ -140,15 +91,64 @@ Grafana 看板导入 `dashboards/grafana.json`。
 TSG (Personal)  ←──mTLS──→  TE (Enterprise)
      │                          │
    NATS JetStream  ←──State Sync──→  NATS JetStream
-     ↑                              ↑
-   指令投递                      指令拉取
-   状态推送                      reconcile loop
 ```
 
 - 个人版 → 企业版：消息投递（带角色 Token）
 - 企业版 → 个人版：反向命令（带审计 + 二次确认）
-- State 同步：NATS JetStream（生产）/ 内存模拟（测试）
-- Reconcile：每 30 秒双向 reconcile，推 state + 拉 state + 拉指令
+- State 同步：NATS JetStream 或 Redis Streams
+
+### 真闭环示例（v0.3.0）
+
+启动 TE 和 TSG 两个进程：
+
+```bash
+# Terminal 1: 启动 TE（已配置 TSG 地址）
+./te-v0.3.0-linux-amd64 -config te.json
+
+# Terminal 2: 启动 TSG（个人网关，端口 8443）
+./tsg -port 8443
+```
+
+演示完整命令往返：
+
+```bash
+# 1. 绑定角色（企业角色 → TSG 令牌）
+curl -X POST http://localhost:8888/api/v1/tsg/role/bind \
+  -d '{"user_id":"alice","role_id":"admin","tsg_token":"tok123"}'
+# → {"bound":true,"user_id":"alice","role_id":"admin"}
+
+# 2. 企业向个人网关发指令
+curl -X POST http://localhost:8888/api/v1/tsg/command \
+  -d '{"tool_id":"file_search","params":{"query":"*.go"},"role_token":"tok123"}'
+# → {"cmd_id":"cmd-xxx","status":"delivered"}
+
+# 3. 推送状态同步
+curl -X POST http://localhost:8888/api/v1/tsg/state/sync \
+  -d '{"state":{"mode":"active","version":"v0.3.0"}}'
+# → {"status":"synced","timestamp":1234567890}
+
+# 4. 拉取本地状态
+curl http://localhost:8888/api/v1/tsg/state
+# → {"state":{"mode":"active"},"last_sync":1234567890,"sync_age":5.2}
+
+# 5. 拉取 TSG 下发指令列表
+curl http://localhost:8888/api/v1/tsg/commands
+# → {"commands":[],"count":0}
+
+# 6. 跨网关角色验证
+curl -X POST http://localhost:8888/api/v1/role/check \
+  -d '{"user_id":"alice","resource_id":"dashboard","action":"read","role_token":"tok123"}'
+# → {"allowed":true,"local":false,"cross":true,"role_token":true}
+```
+
+实时事件流：
+
+```bash
+# SSE 事件流（每 5s 心跳 + 新指令通知）
+curl -N http://localhost:8888/api/v1/tsg/events
+# → {"event":"connected","version":"v0.3.0"}
+# → {"event":"commands_updated","count":1}
+```
 
 ## 📄 License
 
