@@ -1,40 +1,35 @@
-# TarsEnterprise 变更日志
+# TarsEnterprise Changelog
 
-## v0.5.0 — 零信任网络接入（mTLS 双向认证）
+## v4.32.0 (2026-10-18)
 
-**发布日期：** 2026-10-18
+### 零信任网络接入 — mTLS 双向认证
 
-### 新增功能
-- **mTLS 双向认证配置档** (`config.MTLSConfig`)：支持通过配置文件统一管理证书路径、自动轮换策略、零信任角色白名单
-- **证书自动轮换逻辑** (`pkg/mtls/rotation.go`)：
-  - `RotationManager` 后台监控证书有效期
-  - 在过期前自动重新生成并持久化自签名证书（默认 30 天有效期，过期前 7 天轮换）
-  - 支持从现有 PEM 文件加载，不存在时自动生成
-  - 每小时检查一次，轮换失败仅记录日志、不中断服务
-- **零信任身份验证** (`pkg/mtls/zerotrust.go`)：
-  - TLS 握手层强制 `RequireAndVerifyClientCert`
-  - `VerifyPeerCertificate` 回调校验客户端证书 CN/OU 是否在允许角色列表中
-  - 无有效客户端证书的连接直接拒绝（人话化错误提示）
-  - HTTP 中间件 `RequireMTLSMiddleware` 供应用层二次防护
-- **服务端集成** (`cmd/te/main.go`)：
-  - mTLS 启用时自动切换为 `tls.Listen` 启动 HTTPS
-  - 自动轮换守护线程与主服务生命周期绑定
+- **CertificateManager** (`pkg/mtls/manager.go`)
+  - 服务端证书、CA 证书池与客户端证书验证的全生命周期管理
+  - 支持从文件加载和内存 PEM 两种初始化方式
+  - 证书动态重载（Reload）
+  - 服务端证书信息查询（用于健康检查与状态展示）
 
-### 安全强化
-- 最低 TLS 版本锁定为 1.3
-- 无客户端证书 = 零信任拒绝，不降级到普通 HTTP
-- 自签名证书文件权限：cert 0644 / key 0600 / ca 0644
+- **自签名 CA + 自定义 CA 双模式**
+  - `self_signed`：自动生成 CA + 服务端证书，开箱即用
+  - `custom_ca`：从指定文件路径加载企业自有 CA 与服务端证书
 
-### 测试覆盖
-- `pkg/mtls/rotation_test.go`：初始化、轮换、加载已有证书、过期检测、起停、解析
-- `pkg/mtls/zerotrust_test.go`：enforce 策略、身份提取、中间件行为
+- **证书过期自动拒绝 + 小白化错误提示**
+  - 服务端证书过期 → "服务器安全证书已过期，请联系管理员更新证书后再试"
+  - 客户端未提供证书 → "连接需要客户端证书，请确保已正确配置并上传您的身份证书"
+  - 客户端证书过期 → "您的身份证书已过期，请联系管理员重新签发证书"
+  - 客户端证书尚未生效 → "您的身份证书尚未生效，请确认系统时间是否正确，或联系管理员"
 
----
+- **HTTP 中间件**
+  - `ClientCertMiddleware`：从 TLS 连接提取客户端证书并注入请求上下文
+  - `RequireClientCert`：强制要求客户端证书（HTTP 495）
 
-## v0.4.1 — 维护更新
+- **API 端点**
+  - `GET /api/v1/mtls/status` — 查询当前 mTLS 配置状态与客户端身份信息
 
-- 版本号同步
+- **启动支持**
+  - `cmd/te` 根据配置自动选择明文或 mTLS 模式启动
+  - TLS 1.3 最低版本，强制双向认证
 
-## v0.4.0 — 完整性能评价体系
-
-- 基准测试 harness、回归基线、趋势看板
+- **测试**
+  - 20 个测试用例，`go test -race ./pkg/mtls/...` 全绿

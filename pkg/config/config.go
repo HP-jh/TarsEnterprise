@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 )
 
-var Version = "v0.5.0"
+var Version = "v4.32.0"
 
 type Config struct {
 	FirstRun    bool              `json:"first_run"`
@@ -21,18 +21,6 @@ type Config struct {
 	Metrics     MetricsConfig     `json:"metrics"`
 	AdminToken  string            `json:"admin_token"`
 	MTLS        MTLSConfig        `json:"mtls"`
-}
-
-type MTLSConfig struct {
-	Enabled        bool     `json:"enabled"`
-	CertPath       string   `json:"cert_path"`
-	KeyPath        string   `json:"key_path"`
-	CAPath         string   `json:"ca_path"`
-	AutoRotate     bool     `json:"auto_rotate"`
-	RotateInterval string   `json:"rotate_interval"` // 解析为 duration，如 "720h"
-	RotateWindow   string   `json:"rotate_window"`   // 证书过期前多久开始轮换，如 "168h"
-	AllowRoles     []string `json:"allow_roles"`     // 零信任：允许访问的角色列表（证书 CN/OU 匹配）
-	Enforce        bool     `json:"enforce"`         // 零信任：是否强制拒绝无有效客户端证书的连接
 }
 
 type ClientConfig struct {
@@ -76,6 +64,15 @@ type MetricsConfig struct {
 	Port    int  `json:"port"`
 }
 
+type MTLSConfig struct {
+	Enabled      bool   `json:"enabled"`
+	Mode         string `json:"mode"`          // "self_signed" | "custom_ca"
+	CertFile     string `json:"cert_file"`     // 服务端证书路径
+	KeyFile      string `json:"key_file"`      // 服务端密钥路径
+	CAFile       string `json:"ca_file"`       // CA 证书路径（自定义 CA 模式）
+	ClientAuth   string `json:"client_auth"`   // "require" | "verify" | "optional"
+}
+
 func defaultConfig() *Config {
 	return &Config{
 		FirstRun:    true,
@@ -87,7 +84,7 @@ func defaultConfig() *Config {
 		TSGBridge:   TSGBridgeConfig{Enabled: false},
 		Sandbox:     SandboxConfig{Enabled: true, Runtime: "gvisor", Seccomp: true},
 		Metrics:     MetricsConfig{Enabled: true, Port: 8888},
-		MTLS:        MTLSConfig{Enabled: false, AutoRotate: true, RotateInterval: "720h", RotateWindow: "168h", Enforce: true},
+		MTLS:        MTLSConfig{Enabled: false, Mode: "self_signed", ClientAuth: "require"},
 	}
 }
 

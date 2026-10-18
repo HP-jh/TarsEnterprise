@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -94,6 +95,8 @@ func (g *Gateway) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/obsidian/writeback", apiChain(g.handleObsidianWriteBack))
 	// Voice Correction
 	mux.HandleFunc("/api/v1/voice/correct", apiChain(g.handleVoiceCorrect))
+	// mTLS 零信任状态（公开查询当前 mTLS 配置）
+	mux.HandleFunc("/api/v1/mtls/status", apiChain(g.handleMTLSStatus))
 	// Auto-update endpoints (check public, apply admin-only)
 	mux.HandleFunc("/api/v1/update/check", apiChain(g.handleUpdateCheck))
 	mux.HandleFunc("/api/v1/update/apply", security.Chain(g.handleUpdateApply,
@@ -119,6 +122,41 @@ func (g *Gateway) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]interface{}{
 		"status":  "ok",
 		"version": config.Version,
+	})
+}
+
+func (g *Gateway) handleMTLSStatus(w http.ResponseWriter, r *http.Request) {
+	// 从 TLS 连接中提取客户端身份信息（如果存在）
+	clientInfo := map[string]interface{}{"present": false}
+	if r.TLS != nil && len(r.TLS.PeerCertificates) > 0 {
+		cert := r.TLS.PeerCertificates[0]
+		clientInfo = map[string]interface{}{
+			"present":    true,
+			"subject":    cert.Subject.String(),
+			"issuer":     cert.Issuer.String(),
+			"serial":     cert.SerialNumber.String(),
+			"not_after":  cert.NotAfter.Unix(),
+			"dns_names":  cert.DNSNames,
+		}
+	}
+	writeJSON(w, map[string]interface{}{
+		"enabled":     g.cfg.MTLS.Enabled,
+		"mode":        g.cfg.MTLS.Mode,
+		"client_auth": g.cfg.MTLS.ClientAuth,
+		"tls_version": func() string {
+			if r.TLS != nil {
+				switch r.TLS.Version {
+				case tls.VersionTLS13:
+					return "TLS 1.3"
+				case tls.VersionTLS12:
+					return "TLS 1.2"
+				default:
+					return "unknown"
+				}
+			}
+			return "none"
+		}(),
+		"client": clientInfo,
 	})
 }
 
