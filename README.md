@@ -175,3 +175,8 @@ curl -X POST http://localhost:8888/api/v1/update/apply \
 ## 📄 License
 
 Apache License 2.0 — 详见 [LICENSE](LICENSE)
+
+## Changelog
+
+### v1.0.1
+- Version bump with stability improvements
