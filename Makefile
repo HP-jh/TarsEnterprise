@@ -1,5 +1,5 @@
 MODULE := github.com/HP-jh/TarsEnterprise
-VERSION := v0.4.0
+VERSION := v0.5.0
 BINARY := te
 BUILD_FLAGS := -ldflags "-s -w -X $(MODULE)/pkg/config.Version=$(VERSION)"
 

@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 )
 
-var Version = "v0.4.1"
+var Version = "v0.5.0"
 
 type Config struct {
 	FirstRun    bool              `json:"first_run"`
@@ -20,6 +20,19 @@ type Config struct {
 	Sandbox     SandboxConfig     `json:"sandbox"`
 	Metrics     MetricsConfig     `json:"metrics"`
 	AdminToken  string            `json:"admin_token"`
+	MTLS        MTLSConfig        `json:"mtls"`
+}
+
+type MTLSConfig struct {
+	Enabled        bool     `json:"enabled"`
+	CertPath       string   `json:"cert_path"`
+	KeyPath        string   `json:"key_path"`
+	CAPath         string   `json:"ca_path"`
+	AutoRotate     bool     `json:"auto_rotate"`
+	RotateInterval string   `json:"rotate_interval"` // 解析为 duration，如 "720h"
+	RotateWindow   string   `json:"rotate_window"`   // 证书过期前多久开始轮换，如 "168h"
+	AllowRoles     []string `json:"allow_roles"`     // 零信任：允许访问的角色列表（证书 CN/OU 匹配）
+	Enforce        bool     `json:"enforce"`         // 零信任：是否强制拒绝无有效客户端证书的连接
 }
 
 type ClientConfig struct {
@@ -74,6 +87,7 @@ func defaultConfig() *Config {
 		TSGBridge:   TSGBridgeConfig{Enabled: false},
 		Sandbox:     SandboxConfig{Enabled: true, Runtime: "gvisor", Seccomp: true},
 		Metrics:     MetricsConfig{Enabled: true, Port: 8888},
+		MTLS:        MTLSConfig{Enabled: false, AutoRotate: true, RotateInterval: "720h", RotateWindow: "168h", Enforce: true},
 	}
 }
 
