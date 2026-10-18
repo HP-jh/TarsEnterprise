@@ -180,3 +180,7 @@ Apache License 2.0 — 详见 [LICENSE](LICENSE)
 
 ### v1.0.1
 - Version bump with stability improvements
+
+## Changelog
+
+- v0.4.2: routine maintenance and stability improvements
