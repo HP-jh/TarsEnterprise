@@ -45,6 +45,20 @@ func main() {
 		}
 	}
 
+	// Validate configuration with user-friendly messages
+	if validationErrs := cfg.Validate(); len(validationErrs) > 0 {
+		log.Println("[config] 配置检查发现了以下需要注意的地方：")
+		for _, e := range validationErrs {
+			log.Printf("  [%s] %s", e.Field, e.FriendlyMsg)
+			if e.Suggestion != "" {
+				log.Printf("    建议: %s", e.Suggestion)
+			}
+		}
+		log.Println("[config] 上述问题不会阻止启动，但可能影响部分功能")
+	} else {
+		log.Println("[config] 配置验证通过")
+	}
+
 	// Start metrics
 	metrics.Start()
 

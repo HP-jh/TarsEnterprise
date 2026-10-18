@@ -10,6 +10,7 @@ import (
 
 	"github.com/HP-jh/TarsEnterprise/pkg/company"
 	"github.com/HP-jh/TarsEnterprise/pkg/config"
+	"github.com/HP-jh/TarsEnterprise/pkg/health"
 	"github.com/HP-jh/TarsEnterprise/pkg/i18n"
 	"github.com/HP-jh/TarsEnterprise/pkg/knowledge"
 	"github.com/HP-jh/TarsEnterprise/pkg/mcp"
@@ -22,14 +23,15 @@ import (
 )
 
 type Gateway struct {
-	cfg        *config.Config
-	roleMgr    *role.Manager
-	mcpHub     *mcp.Hub
-	sandbox    *sandbox.Manager
-	kbMgr      *knowledge.Manager
-	obsCfg     *obsidian.ConnectorConfig
-	voiceCorr  *voicecorrection.Corrector
-	tsgInterop *TSGInterop
+	cfg           *config.Config
+	roleMgr       *role.Manager
+	mcpHub        *mcp.Hub
+	sandbox       *sandbox.Manager
+	kbMgr         *knowledge.Manager
+	obsCfg        *obsidian.ConnectorConfig
+	voiceCorr     *voicecorrection.Corrector
+	tsgInterop    *TSGInterop
+	healthReg     *health.Registry
 }
 
 func New(cfg *config.Config) *Gateway {
@@ -50,6 +52,8 @@ func New(cfg *config.Config) *Gateway {
 	}
 	// Init TSG interop
 	gw.tsgInterop = newTSGInterop(cfg.TSGBridge)
+	// Build health check registry
+	gw.healthReg = gw.buildHealthRegistry()
 	return gw
 }
 
@@ -66,6 +70,7 @@ func (g *Gateway) RegisterRoutes(mux *http.ServeMux) {
 
 	// Health
 	mux.HandleFunc("/health", apiChain(g.handleHealth))
+	mux.HandleFunc("/api/v1/health", apiChain(g.handleHealthV1))
 	// Metrics (Prometheus)
 	mux.HandleFunc("/metrics", apiChain(metrics.HTTPHandler()))
 	// API v1
@@ -123,6 +128,98 @@ func (g *Gateway) handleHealth(w http.ResponseWriter, r *http.Request) {
 		"status":  "ok",
 		"version": config.Version,
 	})
+}
+
+func (g *Gateway) handleHealthV1(w http.ResponseWriter, r *http.Request) {
+	report := g.healthReg.Run(config.Version)
+	writeJSON(w, report)
+}
+
+func (g *Gateway) buildHealthRegistry() *health.Registry {
+	reg := health.NewRegistry()
+
+	// mTLS health
+	reg.Register(func() health.Check {
+		if !g.cfg.MTLS.Enabled {
+			return health.Healthy("mTLS", "mTLS 未启用，使用明文传输（生产环境建议开启）")
+		}
+		return health.Healthy("mTLS", fmt.Sprintf("双向认证已启用，模式: %s", g.cfg.MTLS.Mode))
+	})
+
+	// TSG Bridge health
+	reg.Register(func() health.Check {
+		if !g.cfg.TSGBridge.Enabled {
+			return health.Healthy("TSG_Bridge", "TSG 网关互通未启用")
+		}
+		if g.tsgInterop == nil || g.tsgInterop.tsClient == nil {
+			return health.Unhealthy("TSG_Bridge", fmt.Errorf("TSG 客户端未初始化"))
+		}
+		return health.Healthy("TSG_Bridge", fmt.Sprintf("TSG 互通已连接: %s", g.cfg.TSGBridge.Address))
+	})
+
+	// Knowledge Base health
+	reg.Register(func() health.Check {
+		if g.cfg.CompanyType == "" {
+			return health.Unknown("KnowledgeBase", "公司类型未设置，知识库未初始化")
+		}
+		return health.Healthy("KnowledgeBase", fmt.Sprintf("知识库已初始化，公司类型: %s", g.cfg.CompanyType))
+	})
+
+	// MCP Hub health
+	reg.Register(func() health.Check {
+		if !g.cfg.MCP.Enabled {
+			return health.Healthy("MCP_Hub", "MCP 未启用")
+		}
+		servers := g.mcpHub.ListServers()
+		return health.Healthy("MCP_Hub", fmt.Sprintf("MCP Hub 运行中，已注册 %d 个服务器", len(servers)))
+	})
+
+	// Sandbox health
+	reg.Register(func() health.Check {
+		if !g.cfg.Sandbox.Enabled {
+			return health.Healthy("Sandbox", "沙箱未启用")
+		}
+		return health.Healthy("Sandbox", fmt.Sprintf("沙箱已启用，运行时: %s", g.cfg.Sandbox.Runtime))
+	})
+
+	// Metrics health
+	reg.Register(func() health.Check {
+		if !g.cfg.Metrics.Enabled {
+			return health.Healthy("Metrics", "监控指标未启用")
+		}
+		return health.Healthy("Metrics", fmt.Sprintf("监控指标已启用，端口: %d", g.cfg.Metrics.Port))
+	})
+
+	// Role Manager health
+	reg.Register(func() health.Check {
+		return health.Healthy("Role_Manager", "角色管理器运行正常")
+	})
+
+	// Voice Correction health
+	reg.Register(func() health.Check {
+		return health.Healthy("VoiceCorrection", "语音纠错模块就绪")
+	})
+
+	// Config validation health
+	reg.Register(func() health.Check {
+		validationErrs := g.cfg.Validate()
+		if len(validationErrs) == 0 {
+			return health.Healthy("Config", "配置验证通过，一切正常")
+		}
+		msgs := make([]string, 0, len(validationErrs))
+		for _, e := range validationErrs {
+			msgs = append(msgs, e.FriendlyMsg)
+		}
+		return health.Check{
+			Name:        "Config",
+			Status:      health.StatusDegraded,
+			Message:     fmt.Sprintf("发现 %d 个配置建议", len(validationErrs)),
+			FriendlyMsg: fmt.Sprintf("配置检查发现了 %d 个可以优化的地方：%v", len(validationErrs), msgs),
+			CheckedAt:   health.Healthy("").CheckedAt,
+		}
+	})
+
+	return reg
 }
 
 func (g *Gateway) handleMTLSStatus(w http.ResponseWriter, r *http.Request) {

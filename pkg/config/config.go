@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 )
 
-var Version = "v4.32.0"
+var Version = "v4.33.0"
 
 type Config struct {
 	FirstRun    bool              `json:"first_run"`
@@ -128,4 +128,90 @@ func (c *Config) SaveTo(path string) error {
 		return err
 	}
 	return os.WriteFile(path, data, 0600)
+}
+
+// ValidationError holds a config validation issue with a user-friendly message.
+type ValidationError struct {
+	Field       string `json:"field"`
+	Message     string `json:"message"`
+	FriendlyMsg string `json:"friendly_msg"`
+	Suggestion  string `json:"suggestion"`
+}
+
+// Validate checks the configuration for common problems and returns
+// user-friendly errors (小白化提示).
+func (c *Config) Validate() []ValidationError {
+	var errs []ValidationError
+
+	// Admin token should be set for non-first-run
+	if !c.FirstRun && c.AdminToken == "" {
+		errs = append(errs, ValidationError{
+			Field:       "admin_token",
+			Message:     "admin token is empty",
+			FriendlyMsg: "管理员令牌还没设置呢，这会让自动更新等管理功能无法使用",
+			Suggestion:  "在配置文件中添加 admin_token 字段，或者运行安装向导重新生成",
+		})
+	}
+
+	// mTLS consistency
+	if c.MTLS.Enabled {
+		if c.MTLS.Mode != "self_signed" && c.MTLS.Mode != "custom_ca" {
+			errs = append(errs, ValidationError{
+				Field:       "mtls.mode",
+				Message:     "invalid mTLS mode: " + c.MTLS.Mode,
+				FriendlyMsg: "mTLS 模式设置不对，当前值不认识",
+				Suggestion:  "请使用 self_signed（自动生成证书）或 custom_ca（使用企业自有证书）",
+			})
+		}
+		if c.MTLS.Mode == "custom_ca" {
+			if c.MTLS.CertFile == "" || c.MTLS.KeyFile == "" || c.MTLS.CAFile == "" {
+				errs = append(errs, ValidationError{
+					Field:       "mtls.cert_file",
+					Message:     "custom_ca mode requires cert_file, key_file, and ca_file",
+					FriendlyMsg: "选择了自定义证书模式，但证书文件路径没有填全",
+					Suggestion:  "请检查 cert_file、key_file、ca_file 三个路径是否都已正确配置",
+				})
+			}
+		}
+		if c.MTLS.ClientAuth == "" {
+			errs = append(errs, ValidationError{
+				Field:       "mtls.client_auth",
+				Message:     "client_auth is empty",
+				FriendlyMsg: "客户端证书验证方式没设置",
+				Suggestion:  "建议设为 require（强制要求客户端证书）",
+			})
+		}
+	}
+
+	// TSG bridge address format
+	if c.TSGBridge.Enabled && c.TSGBridge.Address == "" {
+		errs = append(errs, ValidationError{
+			Field:       "tsg_bridge.address",
+			Message:     "TSG bridge enabled but address is empty",
+			FriendlyMsg: "TSG 网关互通已开启，但目标地址还没填",
+			Suggestion:  "在 tsg_bridge.address 中填写 TSG 网关的地址，例如 http://localhost:8080",
+		})
+	}
+
+	// Company type validity
+	if c.CompanyType == "" {
+		errs = append(errs, ValidationError{
+			Field:       "company_type",
+			Message:     "company_type is empty",
+			FriendlyMsg: "公司类型还没选，这会影响角色矩阵和知识库的默认配置",
+			Suggestion:  "可选值：tech（科技）、education（教育）、finance（金融）、healthcare（医疗）",
+		})
+	}
+
+	// Metrics port sanity
+	if c.Metrics.Enabled && c.Metrics.Port <= 0 {
+		errs = append(errs, ValidationError{
+			Field:       "metrics.port",
+			Message:     "metrics port must be positive",
+			FriendlyMsg: "监控指标端口设置不对，端口号必须是正数",
+			Suggestion:  "建议使用 8888 或 9090 等常用端口",
+		})
+	}
+
+	return errs
 }
